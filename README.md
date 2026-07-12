@@ -1,93 +1,133 @@
-# Molecular generative models
+# Molecular generative models: a small SMILES VAE
 
-SMILES-based generative models for molecules in PyTorch: a GRU sequence
-autoencoder and a variational autoencoder with a Gaussian latent space, latent
-sampling, and generation quality metrics (validity, uniqueness, novelty). The
-encoder, decoder, reparameterization, ELBO, and autoregressive sampling are all
-written from scratch.
+A short, honest study of one question, with the code, data sample, and pretrained
+model to reproduce it.
 
-## What it does
+## Question
 
-- A character-level SMILES tokenizer with start, end, and pad tokens
-  (`tokenizer.py`).
-- A shared GRU encoder/decoder backbone, with a plain autoencoder and a
-  variational autoencoder that adds a Gaussian latent, the reparameterization
-  trick, and a KL term (`models.py`).
-- A training loop with gradient clipping and KL annealing to reduce posterior
-  collapse (`train.py`).
-- Generation by sampling the latent prior and decoding autoregressively, scored
-  with RDKit-based validity, uniqueness, and novelty (`metrics.py`).
+Can a small character-level GRU variational autoencoder, trained briefly on a few
+hundred molecules on a CPU, generate valid SMILES strings, and does its latent
+space organize molecules by chemistry?
 
-## What it does not do
+The interesting part of that question is the word "small". Large SMILES VAEs reach
+high validity, but they are large and trained for a long time. This project asks
+what a deliberately tiny model gets you, and reports the modest answer plainly
+rather than dressing it up.
 
-- It is a compact character-level model trained briefly on a CPU, not a tuned
-  generator; validity is modest (see results) and improves with longer training,
-  a larger model, and stronger KL control.
-- It does not enforce chemical validity during decoding (no grammar or masking).
-- No property-conditioned or reinforcement-learning-based optimization.
+## Method
 
-## Install
+- **Representation**: molecules as SMILES strings, tokenized per character with
+  the two-letter atoms `Cl` and `Br` kept whole (`src/molgen/tokenizer.py`).
+- **Model**: a GRU encoder maps a string to a Gaussian posterior, the
+  reparameterization trick samples a latent code, and a GRU decoder generates
+  characters autoregressively (`src/molgen/models.py`). Embedding 48, hidden 128,
+  latent 32, about 0.15 M parameters.
+- **Objective**: the evidence lower bound, reconstruction cross entropy plus a KL
+  term to a standard Gaussian prior. The full derivation is in
+  [docs/method.md](docs/method.md).
+- **Training**: 80 epochs on 400 molecules, Adam, KL annealing to a small target
+  weight to fight posterior collapse. Word dropout is implemented and tested as a
+  second collapse remedy; the method note explains the trade-off and why the
+  committed checkpoint does not use it.
+- **Evaluation**: sample 1000 molecules from the prior and score validity,
+  uniqueness, and novelty with RDKit. Without RDKit the code falls back to a
+  syntactic grammar check and says so.
+
+The data is 400 canonical SMILES carved from the public MoleculeNet Lipophilicity
+set, labels dropped, filtered to a learnable length. It is committed at
+`data/sample_smiles.txt`; see [data/README.md](data/README.md).
+
+## Findings
+
+Measured this session with RDKit 2026.03.3, seed 0, and stored in
+`results/metrics.json`:
+
+| Metric | Value |
+|--------|------:|
+| Validity | 0.150 |
+| Uniqueness | 0.980 |
+| Novelty | 1.000 |
+| Final reconstruction loss | 0.79 |
+| Final KL | 0.065 |
+
+The honest headline is that validity is low. About one sampled string in seven
+parses as a real molecule. That is what a 0.15 M parameter character model trained
+for 80 epochs on 400 molecules on a CPU produces. The valid samples are drug-like
+and almost entirely novel, so the model has learned real SMILES structure, but it
+has not learned to keep every ring closed and every branch balanced. Uniqueness
+and novelty are near their ceilings, which only matters because it rules out
+memorization; on their own those two numbers are easy and should not be read as
+success.
+
+### Hero artifact: the latent-space map
+
+![Latent-space map](results/latent_space_map.png)
+
+Each point is one training molecule placed at the PCA projection of its latent
+mean, colored by Crippen logP. The map is the visual answer to the second half of
+the question. The latent is lightly used rather than collapsed (final KL 0.065),
+and its first principal component tracks molecular size, with logP following more
+weakly. The organization is partial, not clean disentanglement, and the figure is
+shown at that honest resolution. Regenerate it, the metrics, and the checkpoint
+with `python scripts/build_artifacts.py`.
+
+## Reproduce
+
+Install into a fresh environment:
 
 ```bash
 python -m venv .venv && source .venv/bin/activate   # Windows: .venv\Scripts\activate
 pip install torch --index-url https://download.pytorch.org/whl/cpu
-pip install -e ".[dev,chem]"
+pip install -e ".[dev]"
+pip install rdkit          # optional; enables real validity checking
 ```
 
-RDKit (the `chem` extra) is needed for the generation metrics; the models and
-training loop run without it.
+Sample from the committed pretrained VAE, fully offline, no training:
 
-## Run
+```bash
+python scripts/sample.py --n 20
+```
+
+Retrain end to end on the committed sample and rebuild every artifact (about 40
+seconds on a CPU):
+
+```bash
+python scripts/build_artifacts.py --data data/sample_smiles.txt --epochs 80
+```
+
+Fetch the full corpus and recarve the sample (needs a network):
 
 ```bash
 python scripts/download_data.py --outdir data
-python scripts/train.py --data data/smiles.txt --epochs 30 --n-generate 1000
+python scripts/make_sample.py --n 400
 ```
 
-Fully offline on a tiny built-in corpus:
+The narrated walkthrough is `notebooks/demo.ipynb`, which is the intended entry
+point and is committed already executed.
 
-```bash
-python scripts/train.py --builtin --epochs 30
-```
+## Limitations
 
-`notebooks/demo.ipynb` is a short executed walkthrough.
+- Validity is modest and is not enforced during decoding. No grammar mask, valence
+  check, or reinforcement signal.
+- Generation is unconditional. There is no property targeting.
+- The latent organization is real but partial, and is described that way.
+- Trained on 400 molecules on a CPU. This is a study and a portfolio piece, not a
+  production generator. See [model_card.md](model_card.md) for the full account.
 
-## Results
-
-Trained on 4188 public SMILES from the MoleculeNet Lipophilicity set (labels
-ignored; used only as a SMILES corpus), 30 epochs, KL annealing to beta 0.1,
-single CPU, seed 0. One thousand molecules were then sampled from the latent
-prior. Produced by `scripts/train.py` in this repository.
-
-| Metric     | Value | Meaning |
-|------------|------:|---------|
-| Validity   | 0.326 | fraction of samples RDKit can parse |
-| Uniqueness | 0.988 | fraction of valid samples that are distinct |
-| Novelty    | 0.981 | fraction of unique valid samples not in the training set |
-
-The model samples diverse and almost entirely novel strings (uniqueness and
-novelty near 1.0), but only about a third parse as valid molecules after this
-short CPU run. That is the honest trade-off for a small character-level VAE
-trained briefly: it has learned a lot of SMILES structure but not enough to keep
-every sample syntactically and chemically valid. Longer training, a larger
-latent and hidden size, and stronger KL scheduling all raise validity. Example
-valid generations are written to `results/generated_sample.txt`.
-
-## Layout
+## Repository layout
 
 ```
-src/molgen/     tokenizer, data, models, train, metrics
-scripts/        download_data.py, train.py
+src/molgen/     tokenizer, data, models (AE and VAE), train, metrics, grammar,
+                latent (the latent-space map), checkpoint (save/load)
+scripts/        sample.py (offline demo), build_artifacts.py, make_sample.py,
+                download_data.py, train.py
 notebooks/      demo.ipynb (executed)
-tests/          pytest suite for tokenizer, model shapes, and metrics
-data/           gitignored; see data/README.md
-```
-
-## Tests
-
-```bash
-pytest -q
-ruff check src tests scripts
+docs/           method.md (ELBO derivation, KL annealing, word dropout)
+models/         vae.pt (committed pretrained checkpoint, about 0.6 MB)
+results/        latent_space_map.png, vae_losses.png, metrics.json, samples
+data/           sample_smiles.txt committed; full corpus gitignored
+tests/          pytest suite
+model_card.md   honest metrics and limitations
 ```
 
 ## License
