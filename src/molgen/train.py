@@ -31,6 +31,7 @@ class Trainer:
     device: str = "cpu"
     kl_anneal_epochs: int = 10
     max_beta: float = 0.1
+    word_dropout: float = 0.0
     history: dict[str, list[float]] = field(
         default_factory=lambda: {"loss": [], "recon": [], "kl": []}
     )
@@ -63,7 +64,9 @@ class Trainer:
                 ids = ids.to(self.device)
                 opt.zero_grad()
                 if is_vae:
-                    loss, recon, kl = self.model.loss(ids, beta=beta)
+                    loss, recon, kl = self.model.loss(
+                        ids, beta=beta, word_dropout=self.word_dropout
+                    )
                 else:
                     loss = self.model.loss(ids)
                     recon, kl = loss, torch.zeros(())

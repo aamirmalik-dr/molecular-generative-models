@@ -30,9 +30,21 @@ class _Seq2Seq(nn.Module):
         _, h = self.encoder(self.embedding(ids))
         return h[-1]  # (batch, hidden)
 
-    def decode_teacher(self, ids: torch.Tensor, h0: torch.Tensor) -> torch.Tensor:
-        """Teacher-forced decode; predicts each next token from the previous one."""
+    def decode_teacher(
+        self, ids: torch.Tensor, h0: torch.Tensor, word_dropout: float = 0.0
+    ) -> torch.Tensor:
+        """Teacher-forced decode; predicts each next token from the previous one.
+
+        ``word_dropout`` randomly replaces decoder input tokens with the pad
+        embedding (a blank input) during training. This weakens the teacher
+        forcing signal and forces the decoder to lean on the latent code, which
+        counteracts posterior collapse (Bowman et al., 2016). It does not change
+        the prediction targets.
+        """
         inp = ids[:, :-1]
+        if word_dropout > 0.0 and self.training:
+            mask = torch.rand_like(inp, dtype=torch.float) < word_dropout
+            inp = inp.masked_fill(mask, self.pad_id)
         out, _ = self.decoder(self.embedding(inp), h0.unsqueeze(0))
         return self.output(out)  # (batch, seq-1, vocab)
 
@@ -73,17 +85,21 @@ class SmilesVAE(_Seq2Seq):
         std = torch.exp(0.5 * logvar)
         return mu + std * torch.randn_like(std)
 
-    def forward(self, ids: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+    def forward(
+        self, ids: torch.Tensor, word_dropout: float = 0.0
+    ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
         h = self.encode(ids)
         mu, logvar = self.to_mu(h), self.to_logvar(h)
         z = self.reparameterize(mu, logvar)
         h0 = torch.tanh(self.from_latent(z))
-        logits = self.decode_teacher(ids, h0)
+        logits = self.decode_teacher(ids, h0, word_dropout=word_dropout)
         return logits, mu, logvar
 
-    def loss(self, ids: torch.Tensor, beta: float = 1.0) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+    def loss(
+        self, ids: torch.Tensor, beta: float = 1.0, word_dropout: float = 0.0
+    ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
         """Return total loss and its reconstruction and KL parts."""
-        logits, mu, logvar = self.forward(ids)
+        logits, mu, logvar = self.forward(ids, word_dropout=word_dropout)
         target = ids[:, 1:]
         recon = F.cross_entropy(
             logits.reshape(-1, logits.size(-1)), target.reshape(-1), ignore_index=self.pad_id
