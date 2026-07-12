@@ -1,0 +1,11 @@
+{
+  "n_generated": 1000.0,
+  "validity": 0.15,
+  "uniqueness": 0.98,
+  "novelty": 1.0,
+  "validity_check": "rdkit",
+  "final_recon": 0.7881824111938477,
+  "final_kl": 0.06515327677130699,
+  "epochs": 80,
+  "n_training": 400
+}

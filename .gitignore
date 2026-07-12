@@ -16,14 +16,24 @@ env/
 .coverage
 htmlcov/
 
-# Data and generated artifacts (fetched or produced locally, never committed)
+# Data: ignore the full downloaded corpus, keep the small carved sample and docs
 data/*
 !data/README.md
-results/
+!data/sample_smiles.txt
+
+# Generated artifacts: keep the small committed figures, metrics, and samples
+results/*
+!results/latent_space_map.png
+!results/vae_losses.png
+!results/metrics.json
+!results/generated_sample.txt
+
+# Model checkpoints: ignore everything except the small pretrained VAE
 *.pt
 *.pth
 *.pth.tar
 *.ckpt
+!models/vae.pt
 
 # OS
 .DS_Store
