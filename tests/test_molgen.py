@@ -1,5 +1,8 @@
+from pathlib import Path
 
 from molgen.data import BUILTIN_SMILES, SmilesDataset, collate, load_smiles
+from molgen.grammar import grammar_metrics, grammar_valid
+from molgen.latent import compute_properties, latent_means, pca_project
 from molgen.models import SmilesAE, SmilesVAE
 from molgen.tokenizer import SmilesTokenizer, atomize
 from molgen.train import Trainer, set_seed
@@ -70,3 +73,56 @@ def test_metrics_optional_rdkit():
     m = generation_metrics(["CCO", "not_a_molecule", "c1ccccc1"], ["CCO"])
     assert m["validity"] == 2 / 3
     assert 0.0 <= m["novelty"] <= 1.0
+
+
+def test_grammar_valid_rules():
+    assert grammar_valid("CCO")
+    assert grammar_valid("c1ccccc1")
+    assert grammar_valid("C[C@H](N)O")
+    assert not grammar_valid("")  # empty
+    assert not grammar_valid("CC(C")  # unbalanced parenthesis
+    assert not grammar_valid("c1ccccc")  # unpaired ring digit
+
+
+def test_grammar_metrics_no_rdkit():
+    m = grammar_metrics(["CCO", "CC(C", "c1ccccc1"], ["CCO"])
+    assert m["validity"] == 2 / 3
+    assert 0.0 <= m["novelty"] <= 1.0
+
+
+def test_word_dropout_keeps_loss_scalar():
+    tok = SmilesTokenizer().build(BUILTIN_SMILES)
+    ds = SmilesDataset(BUILTIN_SMILES, tok)
+    ids, _ = collate([ds[i] for i in range(4)], pad_id=tok.pad_id)
+    model = SmilesVAE(len(tok), embed_dim=16, hidden_dim=32, latent_dim=8, pad_id=tok.pad_id)
+    model.train()
+    total, recon, kl = model.loss(ids, beta=0.1, word_dropout=0.5)
+    assert total.ndim == 0 and recon.ndim == 0 and kl.item() >= 0
+
+
+def test_latent_means_and_pca_shapes():
+    tok = SmilesTokenizer().build(BUILTIN_SMILES)
+    model = SmilesVAE(len(tok), embed_dim=16, hidden_dim=32, latent_dim=8, pad_id=tok.pad_id)
+    mu = latent_means(model, BUILTIN_SMILES, tok)
+    assert mu.shape == (len(BUILTIN_SMILES), 8)
+    coords = pca_project(mu, 2)
+    assert coords.shape == (len(BUILTIN_SMILES), 2)
+
+
+def test_compute_properties_length():
+    vals = compute_properties(["CCO", "c1ccccc1"], "length")
+    assert vals.tolist() == [3.0, 8.0]
+
+
+def test_checkpoint_roundtrip(tmp_path: Path):
+    from molgen.checkpoint import load_vae, save_vae
+
+    tok = SmilesTokenizer().build(BUILTIN_SMILES)
+    model = SmilesVAE(len(tok), embed_dim=16, hidden_dim=32, latent_dim=8, pad_id=tok.pad_id)
+    ckpt = tmp_path / "vae.pt"
+    save_vae(ckpt, model, tok)
+    model2, tok2 = load_vae(ckpt)
+    assert len(tok2) == len(tok)
+    assert tok2.decode(tok2.encode("CCO")) == "CCO"
+    gen = model2.generate(3, tok2.sos_id, tok2.eos_id, max_len=30)
+    assert len(gen) == 3
