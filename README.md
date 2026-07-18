@@ -1,4 +1,4 @@
-# Molecular generative models: a small SMILES VAE
+# molecular-generative-models
 
 *Origin: Originally developed for the AI Chemistry course at KAIST (Fall 2022); refactored and open-sourced in July 2026.*
 
