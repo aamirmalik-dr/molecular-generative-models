@@ -1,7 +1,5 @@
 # molecular-generative-models
 
-*Origin: Originally developed for the AI Chemistry course at KAIST (Fall 2022); refactored and open-sourced in July 2026.*
-
 A short, honest study of one question, with the code, data sample, and pretrained
 model to reproduce it.
 
@@ -140,3 +138,7 @@ MIT, see [LICENSE](LICENSE).
 
 Aamir Malik. [GitHub](https://github.com/aamirmalik-dr) ·
 [LinkedIn](https://linkedin.com/in/dr-aamirmalik)
+
+---
+
+*Refactored and engineered into this tested, reproducible project in July 2026, from work originally done for the AI Chemistry course at KAIST (Fall 2022).*
